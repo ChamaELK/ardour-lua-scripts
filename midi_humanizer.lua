@@ -1,4 +1,4 @@
-ardour { ["type"] = "Snippet", name = "Humanizing Midi Events",
+ardour { ["type"] = "EditorAction", name = "Humanizing Midi Events",
 	license     = "",
 	author      = "Chama El Kasri",
 	description = [[ Given a dissonance model the script attenuates dissonance.]]
@@ -34,9 +34,53 @@ function randomize(velocity)
 end
 
 function accent(velocity) 
-	local accent = math.ceil(velocity * 0.2)
-	return math.max(0, math.min(result, 127))
+	local accent = math.ceil(velocity * 1.5)
+	return math.max(0, math.min(accent, 127))
 end 
+
+function humanize(current_group , midi_command,bass, alpha) 
+	print("harmonize")
+	for k, ni in pairs(current_group) do
+				
+		local new_note = nil 
+		local new_velocity  = nil
+		print(ni:note())
+		if ni:note() ~= bass then			
+			new_velocity = apply_weight(ni:note (), ni:velocity (), bass, alpha) 
+			-- remove old note add new note	
+			new_note = ARDOUR.LuaAPI.new_noteptr (ni:channel (), ni:time() , ni:length (), ni:note (), new_velocity )
+						
+			current_group[k] = nil
+			midi_command:remove(ni)
+						
+			current_group[k] = new_note
+			midi_command:add(new_note)
+					
+		else
+			new_velocity = randomize(ni:velocity ()) 
+			new_note = ARDOUR.LuaAPI.new_noteptr (ni:channel (), ni:time() , ni:length (), ni:note (), randomize(ni:velocity () ) )
+						
+			current_group[k] = nil
+			midi_command:remove(ni)
+						
+			current_group[k] = new_note
+			midi_command:add(new_note)
+		end
+					
+	end
+
+end 
+
+
+function get_bass(group)
+	local bass = 0
+	for _, ni in pairs(group) do
+    		if bass == 0 or ni:note() < bass then
+        		bass = ni:note()
+    		end
+	end
+	return bass
+end
 
 function factory () return function ()
 	-- Calculate the minimal position and the maximum length of the
@@ -58,7 +102,7 @@ function factory () return function ()
 		-- Iterate over all notes of the MIDI region and reverse them
 		local mm = mr:midi_source(0):model ()
 		local midi_command = mm:new_note_diff_command (" Test MIDI Events")
-		local current_time = nil
+		local current_time = -1
 		local current_group = {}
 		local previous_group = {}
 
@@ -68,86 +112,84 @@ function factory () return function ()
 			
 			-- local new_note = ARDOUR.LuaAPI.new_noteptr (note:channel (), note:time() , note:length (), note:note (), randomize(note:velocity () ) )
 			if note:isnil() then goto continue4 end
-			-- print(note:note())
+			print(note:note())
     			local t = note:time()
 
-
-    			if current_time == nil or t == current_time then
-        			table.insert(current_group, note)
-				
-        			current_time = t
-    			else
-        			
+			-- if next(current_group) ~=nil  
+        		if current_time == -1 then 
+				current_time =t 
+			end
+			if current_time == t then 
+				print("insert")
+				table.insert(current_group,note) 
+			end 
+			print("--")
+			--print(t) 
+			-- print(current_time)
+			
+			if t> current_time then 
+				print("process")
+				current_time = t  	
 				-- get bass note for note in table 
-				local bass = nil
-
-				for _, v in pairs(current_group) do
-					
-    					if bass == nil or v:note() < bass then
-        					bass = v:note()
+				local bass = get_bass(current_group)
+				--[[
+				print("bass")
+				for _, ni in pairs(current_group) do
+    					if bass == 0 or ni:note() < bass then
+        					bass = ni:note()
     					end
 				end
-
-				-- process current  group
-				local alpha = 0.4
-				for _, ni in pairs(current_group) do
-				
-					local new_note = nil 
-					local new_velocity  = nil
-					
-					if ni:note() ~= bass then
-						new_velocity = apply_weight(ni:note (), ni:velocity (), bass, alpha) 
-						-- remove old note add new note	
-						new_note = ARDOUR.LuaAPI.new_noteptr (ni:channel (), ni:time() , ni:length (), ni:note (), new_velocity )
-						-- new_note = ARDOUR.LuaAPI.new_noteptr (note:local new_note = ARDOUR.LuaAPI.new_noteptr (ni:channel (), ni:time() , ni:length (), ni:note (), new_velocity ))
-						midi_command:remove(ni)
-						midi_command:add(new_note)
-					
-					else
-						new_velocity = randomize(ni:velocity ()) 
-						new_note = ARDOUR.LuaAPI.new_noteptr (ni:channel (), ni:time() , ni:length (), ni:note (), randomize(ni:velocity () ) )
-						midi_command:remove(ni)
-						midi_command:add(new_note)
-					end
-					
+				-- print(bass)
+				]]			
+			humanize(current_group , midi_command,bass,  2.8) 
+			if next(previous_group) ~= nil then
+			
+			print("apply accent")
+			for kp, npi in pairs(previous_group) do
+				for kc, nci in pairs(current_group) do 
+				if  npi:note() == nci:note() then 
+					print("accent applied")
+					print(nci:note())
+					local accent_velocity = accent(npi:velocity ())
+					local accented_note =  ARDOUR.LuaAPI.new_noteptr (nci:channel (), nci:time() , nci:length (), nci:note (), accent_velocity )
+					current_group[kc] = nil
+					midi_command:remove(nci)
+					current_group[kc] = accented_note 
+					midi_command:add(accented_note)
 				end
-				 
-
-				-- novelty
-
-				-- new current group 
-			        current_group = {note}
-        			current_time = t
-				if next(previous_group) ~= nil then
-				for _, ni in pairs(previous_group) do
-					-- not working 
+				end		
+	
+			end
+			end	
+				print("populate previous clean current group")
+				for k, ni in pairs(previous_group ) do 
+				previous_group[k] = nil
+				end
+				previous_group = {}
+				for k, ni in pairs(current_group)do 
+					previous_group[k] = current_group[k]
+				end
+				for k, ni in pairs(current_group) do 
 					print(ni:note())
-					-- print(note:note())
-					-- print(ni:note() == note:note())
-					
-					if ni:note() == note:note() then
-						print(ni:note())
-						new_note = ARDOUR.LuaAPI.new_noteptr (note:channel (), note:time() , note:length (), note:note (), accent(note:velocity () ) )
-						midi_command:remove(note)
-						midi_command:add(new_note)
-					end
-								
-				end 
-				-- if found apply accent 
+					current_group[k] = nil
 				end
-				print("---")
-				-- update previous group 
-				previous_group = current_group
+				print("end clear insert")
+				print(note:note())
+				current_group = {}
+				current_group = {note}
+	
+				 
     			end
-
 
 			::continue4::
 		end
+		local bass = get_bass(previous_group)
+		humanize(previous_group , midi_command,bass,  2.8) 
+			
 		mm:apply_command (Session, midi_command)
 
 		-- TODO: support other MIDI events
 		::continue3::
 	end
 end end
-
 
